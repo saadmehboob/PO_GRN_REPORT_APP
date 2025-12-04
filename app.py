@@ -8,8 +8,9 @@ import datetime
 import io
 import os
 import pandas as pd
+import gc
 from PO_report_fetcher import run_po_report, download_po_report, DEFAULT_FROM_DATE
-from PO_report_processor import process_po_report, save_reports_to_csv
+from PO_report_processor_optimized import process_po_report_streaming, save_reports_streaming
 
 # Page configuration
 st.set_page_config(
@@ -153,8 +154,8 @@ with tab1:
                 progress_text.text("Step 4/4: Processing report (generating 3 files)...")
                 progress_bar.progress(80)
                 
-                # Process the report
-                combined_df, processed_df, ProcessedDetailed_df = process_po_report(
+                # Process the report using streaming (memory optimized)
+                reports_dict = process_po_report_streaming(
                     file_data,
                     DEFAULT_FROM_DATE,
                     to_date_str
@@ -162,11 +163,9 @@ with tab1:
                 
                 progress_bar.progress(90)
                 
-                # Save to CSV files
-                reports = save_reports_to_csv(
-                    combined_df,
-                    processed_df,
-                    ProcessedDetailed_df,
+                # Format filenames
+                reports = save_reports_streaming(
+                    reports_dict,
                     DEFAULT_FROM_DATE,
                     to_date_str
                 )
@@ -175,11 +174,12 @@ with tab1:
                 progress_text.empty()
                 progress_bar.empty()
                 
-                # Store processed reports in session state
+                # Store ONLY CSV bytes in session state (not DataFrames!)
                 st.session_state['processed_reports'] = reports
-                st.session_state['combined_df'] = combined_df
-                st.session_state['processed_df'] = processed_df
-                st.session_state['ProcessedDetailed_df'] = ProcessedDetailed_df
+                
+                # Clear the reports_dict to free memory
+                del reports_dict
+                gc.collect()
                 
                 st.success("✅ All reports processed successfully!")
                 
@@ -222,9 +222,11 @@ with tab1:
                     key=f"download_{idx}"
                 )
         
-        # Show preview of processed report
-        if 'combined_df' in st.session_state:
+        # Show preview of processed report (load on-demand from CSV bytes)
+        if 'processed_reports' in st.session_state:
             st.markdown("### 📊 Report Preview")
+            
+            reports = st.session_state['processed_reports']
             
             tab_preview1, tab_preview2, tab_preview3 = st.tabs([
                 "Combined Report",
@@ -232,20 +234,34 @@ with tab1:
                 "ProcessedDetailed Report"
             ])
             
+            # Load only first 10 rows for preview (memory efficient)
             with tab_preview1:
-                df = st.session_state['combined_df']
-                st.info(f"**Rows:** {len(df):,} | **Columns:** {len(df.columns)}")
-                st.dataframe(df.head(10), use_container_width=True)
+                csv_data = [v for k, v in reports.items() if 'Combined' in k][0]
+                df = pd.read_csv(io.BytesIO(csv_data), nrows=10)
+                total_rows = sum(1 for _ in io.BytesIO(csv_data)) - 1  # Count rows without loading all
+                st.info(f"**Rows:** {total_rows:,} | **Columns:** {len(df.columns)}")
+                st.dataframe(df, use_container_width=True)
+                del df
+                gc.collect()
             
             with tab_preview2:
-                df = st.session_state['processed_df']
-                st.info(f"**Rows:** {len(df):,} | **Columns:** {len(df.columns)}")
-                st.dataframe(df.head(10), use_container_width=True)
+                csv_data = [v for k, v in reports.items() if 'Processed_PO' in k][0]
+                df = pd.read_csv(io.BytesIO(csv_data), nrows=10)
+                total_rows = sum(1 for _ in io.BytesIO(csv_data)) - 1
+                st.info(f"**Rows:** {total_rows:,} | **Columns:** {len(df.columns)}")
+                st.dataframe(df, use_container_width=True)
+                del df
+                gc.collect()
             
             with tab_preview3:
-                df = st.session_state['ProcessedDetailed_df']
-                st.info(f"**Rows:** {len(df):,} | **Columns:** {len(df.columns)}")
-                st.dataframe(df.head(10), use_container_width=True)
+                csv_data = [v for k, v in reports.items() if 'ProcessedDetailed' in k][0]
+                df = pd.read_csv(io.BytesIO(csv_data), nrows=10)
+                total_rows = sum(1 for _ in io.BytesIO(csv_data)) - 1
+                st.info(f"**Rows:** {total_rows:,} | **Columns:** {len(df.columns)}")
+                st.dataframe(df, use_container_width=True)
+                del df
+                gc.collect()
+
 
 # -------------------------------
 # TAB 2: Download from Job ID
@@ -298,34 +314,33 @@ with tab2:
                         
                         if process_existing:
                             with st.spinner("Processing report..."):
-                                # Use default dates for processing (since we don't know the actual dates from job ID)
-                                # The dates are only for metadata in the output files
+                                # Use default dates for processing
                                 from_date_default = DEFAULT_FROM_DATE
                                 to_date_default = datetime.date.today().strftime("%m-%d-%Y")
                                 
-                                # Process the report
-                                combined_df, processed_df, ProcessedDetailed_df = process_po_report(
+                                # Process the report using streaming (memory optimized)
+                                reports_dict = process_po_report_streaming(
                                     file_data,
                                     from_date_default,
                                     to_date_default
                                 )
                                 
-                                # Save to CSV files
-                                reports = save_reports_to_csv(
-                                    combined_df,
-                                    processed_df,
-                                    ProcessedDetailed_df,
+                                # Format filenames
+                                reports = save_reports_streaming(
+                                    reports_dict,
                                     from_date_default,
                                     to_date_default
                                 )
                                 
                                 st.success("✅ All reports processed successfully!")
                                 
-                                # Store processed reports in session state (separate key for tab 2 to avoid conflict)
+                                # Store ONLY CSV bytes in session state
                                 st.session_state['processed_reports_tab2'] = reports
-                                st.session_state['combined_df_tab2'] = combined_df
-                                st.session_state['processed_df_tab2'] = processed_df
-                                st.session_state['ProcessedDetailed_df_tab2'] = ProcessedDetailed_df
+                                
+                                # Clear memory
+                                del reports_dict
+                                del file_data
+                                gc.collect()
                                 
                         else:
                             # Just provide raw download
@@ -375,25 +390,39 @@ with tab2:
                     key=f"download_existing_{idx}"
                 )
         
-        # Show preview
-        if 'combined_df_tab2' in st.session_state:
-            st.markdown("### 📊 Report Preview")
-            tab_p1, tab_p2, tab_p3 = st.tabs([
-                "Combined", "Processed", "ProcessedDetailed"
-            ])
+        # Show preview (load on-demand from CSV bytes)
+        st.markdown("### 📊 Report Preview")
+        tab_p1, tab_p2, tab_p3 = st.tabs([
+            "Combined", "Processed", "ProcessedDetailed"
+        ])
+        
+        with tab_p1:
+            csv_data = [v for k, v in reports.items() if 'Combined' in k][0]
+            df = pd.read_csv(io.BytesIO(csv_data), nrows=10)
+            total_rows = sum(1 for _ in io.BytesIO(csv_data)) - 1
+            st.info(f"**Rows:** {total_rows:,} | **Columns:** {len(df.columns)}")
+            st.dataframe(df, use_container_width=True)
+            del df
+            gc.collect()
             
-            with tab_p1:
-                df = st.session_state['combined_df_tab2']
-                st.info(f"**Rows:** {len(df):,} | **Columns:** {len(df.columns)}")
-                st.dataframe(df.head(10), use_container_width=True)
-            with tab_p2:
-                df = st.session_state['processed_df_tab2']
-                st.info(f"**Rows:** {len(df):,} | **Columns:** {len(df.columns)}")
-                st.dataframe(df.head(10), use_container_width=True)
-            with tab_p3:
-                df = st.session_state['ProcessedDetailed_df_tab2']
-                st.info(f"**Rows:** {len(df):,} | **Columns:** {len(df.columns)}")
-                st.dataframe(df.head(10), use_container_width=True)
+        with tab_p2:
+            csv_data = [v for k, v in reports.items() if 'Processed_PO' in k][0]
+            df = pd.read_csv(io.BytesIO(csv_data), nrows=10)
+            total_rows = sum(1 for _ in io.BytesIO(csv_data)) - 1
+            st.info(f"**Rows:** {total_rows:,} | **Columns:** {len(df.columns)}")
+            st.dataframe(df, use_container_width=True)
+            del df
+            gc.collect()
+            
+        with tab_p3:
+            csv_data = [v for k, v in reports.items() if 'ProcessedDetailed' in k][0]
+            df = pd.read_csv(io.BytesIO(csv_data), nrows=10)
+            total_rows = sum(1 for _ in io.BytesIO(csv_data)) - 1
+            st.info(f"**Rows:** {total_rows:,} | **Columns:** {len(df.columns)}")
+            st.dataframe(df, use_container_width=True)
+            del df
+            gc.collect()
+
 
 # Footer
 st.divider()
