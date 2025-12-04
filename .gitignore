@@ -1,0 +1,39 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment variables
+.env
+
+# Test and debug files
+test*.py
+debug*.py
+verify*.py
+try_all_methods.py
+fix_download.py
+download_job_*.py
+get_report_params.py
+gl_fetcher_updated.py
+
+# Jupyter notebooks
+*.ipynb
+
+# Data files
+*.csv
+*.xls
+*.xlsx
+
+# IDE
+.vscode/
+.idea/
+
+# Fly.io
+.fly/
+
